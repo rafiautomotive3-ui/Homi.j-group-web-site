@@ -1,0 +1,173 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: jobs
+    // Document ID: auto-generated
+    // Fields:
+    //   - title: string (required) - The job title
+    //   - country: string (required) - The country where the job is located
+    //   - description: string (required) - The job description
+    //   - createdAt: timestamp (required) - The time the job was created
+    //   - status: string (required, ['open', 'closed']) - The status of the job opening
+    //
+    // Collection: applications
+    // Document ID: auto-generated
+    // Fields:
+    //   - jobId: string (required) - The ID of the job being applied for
+    //   - candidateName: string (required) - The name of the candidate
+    //   - email: string (required, email format) - The email of the candidate
+    //   - education: string (required) - The candidate's educational qualification
+    //   - experience: string (required) - The candidate's years of experience
+    //   - resumeUrl: string (required, URL format) - The URL of the candidate's resume PDF
+    //   - createdAt: timestamp (required) - The time the application was submitted
+    //
+    // Collection: livestock
+    // Document ID: auto-generated
+    // Fields:
+    //   - name: string (required) - The name or ID of the animal
+    //   - type: string (required, ['cow', 'buffalo', 'sheep']) - The type of animal
+    //   - breed: string (required) - The breed of the animal
+    //   - purchasePrice: number (required) - Price at which the animal was purchased
+    //   - purchaseDate: timestamp (required) - Date of purchase
+    //   - sellingPrice: number (optional) - Price at which the animal was sold
+    //   - sellingDate: timestamp (optional) - Date of sale
+    //   - insuranceNumber: string (optional) - Insurance policy number
+    //   - barcode: string (optional) - Barcode or identification code
+    //   - imageUrl: string (optional) - URL of the animal's image
+    //   - status: string (required, ['active', 'sold', 'deceased']) - Current status
+    //   - createdAt: timestamp (required) - Record creation time
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAuthorized() {
+      return isAuthenticated() && 
+             (request.auth.token.email == "rafiautomotive3@gmail.com" || 
+              request.auth.token.email == "homejeprojects@gmail.com");
+    }
+
+    function isAdmin() {
+      return isAuthorized() || 
+             (isAuthenticated() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin');
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidJob(data) {
+      return hasRequiredFields(['title', 'country', 'description', 'createdAt', 'status']) &&
+             hasOnlyAllowedFields(['title', 'country', 'description', 'createdAt', 'status']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 100 &&
+             data.country is string && data.country.size() > 0 && data.country.size() < 50 &&
+             data.description is string && data.description.size() > 0 && data.description.size() < 5000 &&
+             data.createdAt is timestamp &&
+             data.status in ['open', 'closed'];
+    }
+
+    function isValidApplication(data) {
+      return hasRequiredFields(['jobId', 'jobTitle', 'candidateName', 'email', 'education', 'experience', 'resumeUrl', 'createdAt']) &&
+             hasOnlyAllowedFields(['jobId', 'jobTitle', 'candidateName', 'email', 'education', 'experience', 'resumeUrl', 'createdAt']) &&
+             data.jobId is string &&
+             data.jobTitle is string &&
+             data.candidateName is string && data.candidateName.size() > 0 && data.candidateName.size() < 100 &&
+             isValidEmail(data.email) &&
+             data.education is string && data.education.size() > 0 && data.education.size() < 200 &&
+             data.experience is string && data.experience.size() > 0 && data.experience.size() < 200 &&
+             isValidUrl(data.resumeUrl) &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidLivestock(data) {
+      return hasRequiredFields(['name', 'type', 'breed', 'purchasePrice', 'purchaseDate', 'status', 'createdAt']) &&
+             data.name is string && data.name.size() > 0 &&
+             data.type in ['cow', 'buffalo', 'sheep'] &&
+             data.breed is string &&
+             data.purchasePrice is number &&
+             data.purchaseDate is timestamp &&
+             data.status in ['active', 'sold', 'deceased'] &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidHealthRecord(data) {
+      return hasRequiredFields(['animalId', 'type', 'date', 'createdAt']) &&
+             data.animalId is string &&
+             data.type in ['vaccination', 'deworming', 'checkup', 'treatment'] &&
+             data.date is timestamp &&
+             data.createdAt is timestamp;
+    }
+
+    function isValidMilkRecord(data) {
+      return hasRequiredFields(['animalId', 'date', 'quantity', 'createdAt']) &&
+             data.animalId is string &&
+             data.date is timestamp &&
+             data.quantity is number &&
+             data.createdAt is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /jobs/{jobId} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin() && isValidJob(request.resource.data);
+    }
+
+    match /applications/{applicationId} {
+      allow create: if isValidApplication(request.resource.data);
+      allow read, update, delete: if isAdmin();
+    }
+
+    match /livestock/{animalId} {
+      allow read: if true;
+      allow write: if isAdmin();
+      
+      match /health/{recordId} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+      
+      match /milk/{recordId} {
+        allow read: if true;
+        allow write: if isAdmin();
+      }
+    }
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAdmin();
+    }
+    
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
